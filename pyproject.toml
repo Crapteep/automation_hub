@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "automation-hub"
+version = "0.1.0"
+description = ""
+authors = ["Crapteep <crapteep@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.13"
+fastapi = "^0.115.12"
+dependency-injector = "^4.46.0"
+psycopg2-binary = "^2.9.10"
+pydantic-settings = "^2.8.1"
+sqlmodel = "^0.0.24"
+uvicorn = "^0.34.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
