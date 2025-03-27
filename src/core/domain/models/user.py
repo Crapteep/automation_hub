@@ -4,6 +4,7 @@ from pydantic import EmailStr
 from datetime import datetime, timezone
 
 class User(SQLModel, table=True):
+    """User model in DB"""
     id: UUID = Field(default=uuid4, primary_key=True)
     username: str = Field(index=True, unique=True)
     email: EmailStr = Field(unique=True)
