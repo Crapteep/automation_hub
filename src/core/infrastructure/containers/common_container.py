@@ -37,7 +37,7 @@ async def initialized_resources(
 class AutomationHubContainer(containers.DeclarativeContainer):
     """Main application container"""
     wiring_config = containers.WiringConfiguration(
-        modules=("backend.main", "backend.scheduler")
+        modules=["src.main"]
     )
 
     settings = providers.Configuration()

@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Sequence
 
-from core.infrastructure.repositories.common_repository import BaseRepository, RepositoryFilters
+from src.core.infrastructure.repositories.common_repository import BaseRepository, RepositoryFilters
 from src.core.domain.models.user import User
 from uuid import UUID
 
