@@ -1,17 +1,11 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from typing import Protocol, Optional, Sequence, AsyncIterable
-from pydantic import BaseModel, Field
+from typing import Any, Callable, Sequence, Optional, AsyncIterable, TypeVar, ParamSpec
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
-from src.core.domain.models.user import User
-
-
-class NotFound(Exception):
-    ...
-
-class AlreadyExists(Exception):
-    ...
-
+from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel, Field
+from functools import wraps
+from src.core.infrastructure.database.db import Database
+from typing import Protocol
 
 class RepositoryFilters(BaseModel):
     order: str | Sequence[str] | None = None
@@ -21,116 +15,115 @@ class RepositoryFilters(BaseModel):
     def get_page_span_indexes(self) -> tuple[int, int]:
         span_start = (self.page - 1) * self.size
         span_end = span_start + self.size
-
         return span_start, span_end
 
-
-class FetchRepository[RecordTypeOut, RecordIdTypeIn](Protocol):
-    async def fetch(self, record_id: RecordIdTypeIn) -> RecordTypeOut:
+class GenericRepository[RecordType, RecordIdType, FilterType](Protocol):
+    async def create(self, record: RecordType | BaseModel) -> RecordIdType:
         ...
-    
-class FetchManyRepository[RecordTypeOut, RecordIdTypeOut, FilterType](Protocol):
-    async def fetch_many(self, filters: FilterType | None = None) -> tuple[int, AsyncIterable[RecordTypeOut]]:
+    async def create_many(self, records: Sequence[RecordType | BaseModel]) -> Sequence[RecordIdType]:
         ...
-
-class CreateRepository[RecordTypeIn, RecordIdTypeOut](Protocol):
-    async def create(self, record: RecordTypeIn) -> RecordIdTypeOut:
+    async def fetch(self, record_id: RecordIdType) -> RecordType | None:
         ...
-
-class CreateManyRepository[RecordTypeIn, RecordIdTypeOut](Protocol):
-    async def create_many(self, records: Sequence[RecordTypeIn]) -> Sequence[RecordIdTypeOut]:
+    async def fetch_many(self, filters: FilterType | None = None) -> tuple[int, AsyncIterable[RecordType]]:
+        ...
+    async def update(self, record: RecordType) -> None:
+        ...
+    async def update_or_create(self, record: RecordType) -> bool:
         ...
 
-class UpdateRepository[RecordTypeIn](Protocol):
-    async def update(self, record: RecordTypeIn) -> None:
-        ...
-    
-class UpdateOrCreateRepository[RecordTypeIn](Protocol):
-    async def update_or_create(self, record: RecordTypeIn) -> bool:
-        ...
+P = ParamSpec("P")
+R = TypeVar("R")
 
+def with_session(func: Callable[P, R]) -> Callable[P, R]:
+    @wraps(func)
+    async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
+        if not hasattr(self, 'db'):
+            raise AttributeError("Repository must have 'db' attribute")
+        async with self.db.session() as session:
+            try:
+                if 'session' in func.__annotations__:
+                    return await func(self, session, *args, **kwargs)
+                return await func(self, *args, **kwargs)
+            except Exception as e:
+                await session.rollback()
+                raise
+    return wrapper
 
-class GenericRepository[
-    RecordType,
-    RecordIdType,
-    FilterType,
-](
-    CreateRepository[RecordType, RecordIdType],
-    CreateManyRepository[RecordType, RecordIdType],
-    FetchRepository[RecordType, RecordIdType],
-    FetchManyRepository[RecordType, RecordIdType, FilterType],
-    UpdateRepository[RecordType],
-    UpdateOrCreateRepository[RecordType],
-    Protocol[RecordType, RecordIdType, FilterType]
-):
-    ...
-
-
-class BaseRepository[
-    RecordType,
-    RecordIdType,
-    FilterType](
-        GenericRepository[
-            RecordType,
-            RecordIdType,
-            FilterType
-            ]
-        ):
-    
-    allowed_models = {User}
-
-    def __init__(self, model: type[RecordType], db: AsyncSession):
-        if model not in self.allowed_models:
-            raise TypeError(f"{model.__name__} is not allowed!")
+class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[RecordType, RecordIdType, FilterType]):
+    def __init__(self, model: type[RecordType], db: Database):
+        from sqlmodel import SQLModel
+        if not issubclass(model, SQLModel):
+            raise TypeError(f"{model.__name__} must inherit from SQLModel")
         self.db = db
         self.model = model
     
-    async def create(self, record: RecordType) -> RecordIdType:
+    @with_session
+    async def create(self, session: AsyncSession, record: RecordType | BaseModel) -> RecordIdType:
         """Creates a new record and returns its ID."""
-        self.db.add(record)
-        await self.db.commit()
-        await self.db.refresh(record)
-        return record.id
+        try:
+            if isinstance(record, BaseModel):
+                record = self.model(**record.dict())
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+            return record.id
+        except IntegrityError as e:
+            await session.rollback()
+            raise self._map_integrity_error(e) from e
     
-
-    async def create_many(self, records: Sequence[RecordType]) -> Sequence[int]:
+    @with_session
+    async def create_many(self, session: AsyncSession, records: Sequence[RecordType | BaseModel]) -> Sequence[RecordIdType]:
         """Creates multiple records at once."""
-        self.db.add_all(records)
-        await self.db.commit()
-        return [record.id for record in records]
+        try:
+            records = [self.model(**record.dict()) if isinstance(record, BaseModel) else record for record in records]
+            session.add_all(records)
+            await session.commit()
+            return [record.id for record in records]
+        except IntegrityError as e:
+            await session.rollback()
+            raise self._map_integrity_error(e) from e
     
-
-    async def fetch(self, record_id: RecordIdType) -> RecordType | None:
+    @with_session
+    async def fetch(self, session: AsyncSession, record_id: RecordIdType) -> RecordType | None:
         """Retrieves the record by ID."""
-        return await self.db.get(self.model, record_id)
+        return await session.get(self.model, record_id)
     
-
-    async def fetch_many(self, filters: FilterType | None = None) -> tuple[int, Sequence[RecordType]]:
+    @with_session
+    async def fetch_many(self, session: AsyncSession, filters: FilterType | None = None) -> tuple[int, Sequence[RecordType]]:
         """Retrieves multiple records with filtering capabilities."""
         query = select(self.model)
-
         if filters:
             for field, value in filters.dict(exclude_none=True).items():
-                query = query.where(getattr(self.model, field) == value)
-        
-        result = await self.db.execute(query)
+                if hasattr(self.model, field):
+                    query = query.where(getattr(self.model, field) == value)
+            if hasattr(filters, "page") and hasattr(filters, "size"):
+                span_start, span_end = filters.get_page_span_indexes()
+                query = query.offset(span_start).limit(filters.size)
+        result = await session.exec(query)
         items = result.scalars().all()
         return len(items), items
     
-
-    async def update(self, record: RecordType) -> None:
+    @with_session
+    async def update(self, session: AsyncSession, record: RecordType) -> None:
         """Updates an existing record."""
-        self.db.add(record)
-        await self.db.commit()
+        from datetime import datetime, timezone
+        if hasattr(record, "updated_at"):
+            record.updated_at = datetime.now(timezone.utc)
+        session.add(record)
+        await session.commit()
     
-
-    async def update_or_create(self, record: RecordType) -> bool:
+    @with_session
+    async def update_or_create(self, session: AsyncSession, record: RecordType) -> bool:
         """Updates the record if it exists, otherwise creates a new one."""
-        existing_record = await self.fetch(record.id)
+        existing_record = await self.fetch(session, record.id)
         if existing_record:
-            self.db.add(record)
-            await self.db.commit()
+            session.add(record)
+            await session.commit()
             return True
         else:
-            await self.create(record)
+            await self.create(session, record)
             return False
+    
+    def _map_integrity_error(self, error: IntegrityError) -> Exception:
+        """Map IntegrityError to a domain-specific exception. Subclasses should override."""
+        return Exception(f"Database integrity error: {error}")

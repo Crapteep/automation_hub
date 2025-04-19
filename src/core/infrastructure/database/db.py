@@ -55,10 +55,20 @@ class Database:
         """
 
         async with self.session_factory() as session:
-            yield session
+            try:
+                yield session
+            except Exception as e:
+                await session.rollback()
+                raise e
+            finally:
+                await session.close()
     
 
     async def shutdown(self) -> None:
-        """Close database connection."""
-        await self.engine.dispose()
-        logger.info("✅ The connection to the database has been closed")
+        """Close database connection with timeout safety"""
+        try:
+            await asyncio.wait_for(self.engine.dispose(), timeout=5.0)
+            logger.info("✅ Database connection closed gracefully")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Database disposal timed out - forcing shutdown")
+            self.engine.sync_engine.dispose()

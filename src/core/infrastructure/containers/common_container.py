@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import ParamSpec, TypeVar, AsyncIterator
 from src.core.infrastructure.database.db import Database
 from src.core.infrastructure.repositories.user_repository import UserRepository
+from src.core.infrastructure.containers.user_container import UserContainer
 from config.settings import Settings
 
 from dependency_injector import containers, providers
@@ -37,7 +38,7 @@ async def initialized_resources(
 class AutomationHubContainer(containers.DeclarativeContainer):
     """Main application container"""
     wiring_config = containers.WiringConfiguration(
-        modules=["src.main"]
+        modules=["__main__", "src.core.api.v1.endpoints.user"]
     )
 
     settings = providers.Configuration()
@@ -49,10 +50,18 @@ class AutomationHubContainer(containers.DeclarativeContainer):
 
 
     #db connection
-    db = providers.Singleton(Database, db_url=settings.db_url)
-
+    db = providers.Singleton(
+        Database, 
+        db_url=settings.db_url,
+        retry_attempts=5,
+        retry_delay=2.0
+    )
     #Repositories
-    user_repository = providers.Factory(UserRepository, db=db)
+    users = providers.Container(
+        UserContainer,
+        settings=settings,
+        db=db
+    )
 
 
     #Services
