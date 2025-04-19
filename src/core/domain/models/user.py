@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 from pydantic import EmailStr, BaseModel, field_validator
 from datetime import datetime, timezone
 
-from typing import TypeAlias
+from typing import TypeAlias, Optional
 from uuid import UUID
 
 
@@ -27,7 +27,7 @@ class UserData(BaseModel):
 class User(SQLModel, UserData, table=True):
     """User model in the database."""
     id: UserId = Field(default_factory=uuid4, primary_key=True)
-    hashed_password: str = Field(..., min_length=6)
+    hashed_password: Optional[str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     username: str = Field(index=True, unique=True)
