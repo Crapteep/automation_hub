@@ -1,8 +1,8 @@
 from src.core.application.services.user_service import UserService
-from src.core.domain.models.user import User
 from src.core.application.commands.user.create_user_command import CreateUserCommandResponse, CreateUserCommandRequest
-from src.core.application.handlers.common_handlers import CommandHandler, CommandExecutionError
+from src.core.application.handlers.common_handlers import CommandHandler
 from src.core.domain.exceptions.user import UserAlreadyExistsError, InvalidUserDataError
+from src.utils.exceptions import CommandExecutionError
 
 
 class CreateUserHandler(CommandHandler[CreateUserCommandRequest, CreateUserCommandResponse]):
@@ -31,11 +31,13 @@ class CreateUserHandler(CommandHandler[CreateUserCommandRequest, CreateUserComma
         """
         try:
             await self._user_service.create_user(command)
-            return CreateUserCommandResponse(status="success")
+            return CreateUserCommandResponse.success()
         except UserAlreadyExistsError as e:
             raise CommandExecutionError("User already exists", cause=e) from e
         except InvalidUserDataError as e:
             raise CommandExecutionError("Invalid user data", cause=e) from e
+        except Exception as e:
+            raise CommandExecutionError("Unexpected error during user creation", cause=e) from e
     
     async def __call__(self, command: CreateUserCommandRequest) -> CreateUserCommandResponse:
         return await self.handle(command)

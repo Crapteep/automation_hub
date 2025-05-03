@@ -1,6 +1,6 @@
 import argparse
 import os
-
+import sys
 from uvicorn import run
 
 
@@ -30,6 +30,7 @@ def run_automation_hub(dev: bool):
         )
     except KeyboardInterrupt:
         print("Exiting ...")
+        sys.exit(0)
 
 
 def automation_hub_dev():

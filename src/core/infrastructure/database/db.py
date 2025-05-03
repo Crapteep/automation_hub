@@ -3,8 +3,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from sqlmodel import SQLModel, create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.exc import OperationalError
 
 
@@ -28,7 +29,7 @@ class Database:
 
 
         self.engine = create_async_engine(self.db_url, echo=False, future=True)
-        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
 
     async def init_db(self) -> None:
         """It initializes the database and creates tables if there are none."""

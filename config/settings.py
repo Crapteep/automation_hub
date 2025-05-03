@@ -1,7 +1,7 @@
 from typing import Literal, Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from typing import Optional
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -50,3 +50,6 @@ class Settings(BaseSettings):
 
     title: str = "Vinted Automation API"
     db_url: str
+    ALGORITHM: str = "HS256"
+    SECRET_KEY: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: Optional[int] = 30

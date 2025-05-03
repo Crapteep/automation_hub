@@ -34,19 +34,16 @@ class GenericRepository[RecordType, RecordIdType, FilterType](Protocol):
 P = ParamSpec("P")
 R = TypeVar("R")
 
+#TODO move with_session function to the utils
 def with_session(func: Callable[P, R]) -> Callable[P, R]:
     @wraps(func)
     async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
         if not hasattr(self, 'db'):
             raise AttributeError("Repository must have 'db' attribute")
         async with self.db.session() as session:
-            try:
-                if 'session' in func.__annotations__:
-                    return await func(self, session, *args, **kwargs)
-                return await func(self, *args, **kwargs)
-            except Exception as e:
-                await session.rollback()
-                raise
+            if 'session' in func.__annotations__:
+                return await func(self, session, *args, **kwargs)
+            return await func(self, *args, **kwargs)
     return wrapper
 
 class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[RecordType, RecordIdType, FilterType]):
@@ -62,7 +59,7 @@ class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[Rec
         """Creates a new record and returns its ID."""
         try:
             if isinstance(record, BaseModel):
-                record = self.model(**record.dict())
+                record = self.model(**record.model_dump())
             session.add(record)
             await session.commit()
             await session.refresh(record)
@@ -75,7 +72,7 @@ class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[Rec
     async def create_many(self, session: AsyncSession, records: Sequence[RecordType | BaseModel]) -> Sequence[RecordIdType]:
         """Creates multiple records at once."""
         try:
-            records = [self.model(**record.dict()) if isinstance(record, BaseModel) else record for record in records]
+            records = [self.model(**record.model_dump()) if isinstance(record, BaseModel) else record for record in records]
             session.add_all(records)
             await session.commit()
             return [record.id for record in records]
@@ -84,7 +81,7 @@ class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[Rec
             raise self._map_integrity_error(e) from e
     
     @with_session
-    async def fetch(self, session: AsyncSession, record_id: RecordIdType) -> RecordType | None:
+    async def fetch_by_id(self, session: AsyncSession, record_id: RecordIdType) -> RecordType | None:
         """Retrieves the record by ID."""
         return await session.get(self.model, record_id)
     
@@ -93,7 +90,7 @@ class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[Rec
         """Retrieves multiple records with filtering capabilities."""
         query = select(self.model)
         if filters:
-            for field, value in filters.dict(exclude_none=True).items():
+            for field, value in filters.model_dump(exclude_none=True).items():
                 if hasattr(self.model, field):
                     query = query.where(getattr(self.model, field) == value)
             if hasattr(filters, "page") and hasattr(filters, "size"):
@@ -127,3 +124,25 @@ class BaseRepository[RecordType, RecordIdType, FilterType](GenericRepository[Rec
     def _map_integrity_error(self, error: IntegrityError) -> Exception:
         """Map IntegrityError to a domain-specific exception. Subclasses should override."""
         return Exception(f"Database integrity error: {error}")
+    
+    @with_session
+    async def delete(self, session: AsyncSession, record_id: RecordIdType) -> bool:
+        """Deletes a record from the database by record_id."""
+        try:
+            record = await session.get(self.model, record_id)
+            
+            if not record:
+                return False
+            
+            await session.delete(record)
+            await session.commit()
+            
+            deleted_record = await session.get(self.model, record_id)
+            if deleted_record:
+                return False
+            
+            return True
+        except Exception as e:
+            await session.rollback()
+            print(f"Error occurred during deletion: {str(e)}")
+            return False

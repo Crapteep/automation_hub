@@ -1,6 +1,5 @@
 from src.core.domain.models.user import CreateUserData
 from src.core.application.commands.common_commands import CommandRequest, CommandResponse
-from pydantic import EmailStr, field_validator
 
 
 class CreateUserCommandRequest(CreateUserData, CommandRequest):
